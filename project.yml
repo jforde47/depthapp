@@ -1,0 +1,28 @@
+name: DepthTracker
+options:
+  bundleIdPrefix: com.yourname
+  deploymentTarget:
+    iOS: "17.0"
+  xcodeVersion: "15.4"
+  generateEmptyDirectories: true
+targets:
+  DepthTracker:
+    type: application
+    platform: iOS
+    sources:
+      - DepthTracker
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.yourname.DepthTracker
+        TARGETED_DEVICE_FAMILY: "1"
+        SWIFT_VERSION: "5.9"
+        INFOPLIST_FILE: DepthTracker/Info.plist
+    info:
+      path: DepthTracker/Info.plist
+      properties:
+        NSCameraUsageDescription: "Camera access is needed for body tracking and depth measurement."
+        UIRequiredDeviceCapabilities:
+          - arkit
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait

@@ -1,0 +1,36 @@
+workflows:
+  ios-depth-tracker:
+    name: DepthTracker iOS Build
+    max_build_duration: 60
+    instance_type: mac_mini_m2
+    environment:
+      ios_signing:
+        distribution_type: development
+        bundle_identifier: com.yourname.DepthTracker
+      xcode: 15.4
+      vars:
+        XCODE_PROJECT: "DepthTracker.xcodeproj"
+        XCODE_SCHEME: "DepthTracker"
+    integrations:
+      app_store_connect: codemagic
+    scripts:
+      - name: Install XcodeGen and generate project
+        script: |
+          brew install xcodegen
+          xcodegen generate
+      - name: Set up code signing
+        script: xcode-project use-profiles
+      - name: Build IPA
+        script: |
+          xcode-project build-ipa \
+            --project "$XCODE_PROJECT" \
+            --scheme "$XCODE_SCHEME"
+    artifacts:
+      - build/ios/ipa/*.ipa
+    publishing:
+      email:
+        recipients:
+          - your@email.com
+        notify:
+          success: true
+          failure: true
