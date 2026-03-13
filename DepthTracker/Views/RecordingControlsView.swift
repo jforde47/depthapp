@@ -47,6 +47,19 @@ struct RecordingControlsView: View {
                         .padding(6)
                         .background(.ultraThinMaterial, in: Capsule())
                         .padding(.top, 4)
+                } else if viewModel.lidarAvailable {
+                    HStack(spacing: 4) {
+                        Image(systemName: "dot.radiowaves.left.and.right")
+                            .font(.caption2)
+                        Text("LiDAR Active")
+                            .font(.caption)
+                            .fontWeight(.medium)
+                    }
+                    .foregroundStyle(.cyan)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .padding(.top, 4)
                 }
             }
 

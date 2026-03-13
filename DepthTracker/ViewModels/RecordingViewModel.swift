@@ -25,6 +25,7 @@ class RecordingViewModel {
 
     // Camera
     var useFrontCamera: Bool = false
+    var lidarAvailable: Bool { bodyTrackingManager.isLidarAvailable }
 
     // Video
     var videoURL: URL?

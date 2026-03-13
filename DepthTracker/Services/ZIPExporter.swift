@@ -87,23 +87,37 @@ struct ZIPExporter {
         lines.append(String(format: "Duration: %.1f seconds", duration))
         lines.append("")
 
-        let joints: [(String, (JointDepthSample) -> Float)] = [
+        // Skeleton-based depth stats
+        lines.append("--- Skeleton Depth (ARKit Body Tracking) ---")
+        lines.append("")
+
+        let skeletonJoints: [(String, (JointDepthSample) -> Float)] = [
             ("Pelvis",     \.pelvisDepth),
             ("Head",       \.headDepth),
             ("Left Foot",  \.leftFootDepth),
             ("Right Foot", \.rightFootDepth)
         ]
 
-        for (name, accessor) in joints {
-            let depths = samples.map(accessor).filter { !$0.isNaN }
-            guard let minVal = depths.min(), let maxVal = depths.max() else { continue }
-            let avg = depths.reduce(0, +) / Float(depths.count)
-            lines.append("\(name):")
-            lines.append(String(format: "  Min: %.4f m", minVal))
-            lines.append(String(format: "  Max: %.4f m", maxVal))
-            lines.append(String(format: "  Avg: %.4f m", avg))
-            lines.append(String(format: "  Range: %.4f m", maxVal - minVal))
+        for (name, accessor) in skeletonJoints {
+            appendJointStats(name: name, depths: samples.map(accessor), to: &lines)
+        }
+
+        // LiDAR depth stats (if available)
+        let hasLidar = samples.contains { !$0.lidarPelvisDepth.isNaN }
+        if hasLidar {
+            lines.append("--- LiDAR Depth (Scene Depth Map) ---")
             lines.append("")
+
+            let lidarJoints: [(String, (JointDepthSample) -> Float)] = [
+                ("Pelvis",     \.lidarPelvisDepth),
+                ("Head",       \.lidarHeadDepth),
+                ("Left Foot",  \.lidarLeftFootDepth),
+                ("Right Foot", \.lidarRightFootDepth)
+            ]
+
+            for (name, accessor) in lidarJoints {
+                appendJointStats(name: name, depths: samples.map(accessor), to: &lines)
+            }
         }
 
         // Joint count info
@@ -113,5 +127,17 @@ struct ZIPExporter {
         }
 
         return lines.joined(separator: "\n")
+    }
+
+    private static func appendJointStats(name: String, depths: [Float], to lines: inout [String]) {
+        let valid = depths.filter { !$0.isNaN }
+        guard let minVal = valid.min(), let maxVal = valid.max() else { return }
+        let avg = valid.reduce(0, +) / Float(valid.count)
+        lines.append("\(name):")
+        lines.append(String(format: "  Min: %.4f m", minVal))
+        lines.append(String(format: "  Max: %.4f m", maxVal))
+        lines.append(String(format: "  Avg: %.4f m", avg))
+        lines.append(String(format: "  Range: %.4f m", maxVal - minVal))
+        lines.append("")
     }
 }

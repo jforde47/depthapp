@@ -21,7 +21,11 @@ struct CSVExporter {
             "pelvis_delta",
             "head_delta",
             "left_foot_delta",
-            "right_foot_delta"
+            "right_foot_delta",
+            "lidar_pelvis_depth",
+            "lidar_head_depth",
+            "lidar_left_foot_depth",
+            "lidar_right_foot_depth"
         ]
 
         // Add 3 columns (x, y, z) per joint
@@ -44,7 +48,11 @@ struct CSVExporter {
                 String(format: "%.4f", s.pelvisDelta),
                 String(format: "%.4f", s.headDelta),
                 String(format: "%.4f", s.leftFootDelta),
-                String(format: "%.4f", s.rightFootDelta)
+                String(format: "%.4f", s.rightFootDelta),
+                s.lidarPelvisDepth.isNaN ? "" : String(format: "%.4f", s.lidarPelvisDepth),
+                s.lidarHeadDepth.isNaN ? "" : String(format: "%.4f", s.lidarHeadDepth),
+                s.lidarLeftFootDepth.isNaN ? "" : String(format: "%.4f", s.lidarLeftFootDepth),
+                s.lidarRightFootDepth.isNaN ? "" : String(format: "%.4f", s.lidarRightFootDepth)
             ]
 
             for jointName in sortedJointNames {
