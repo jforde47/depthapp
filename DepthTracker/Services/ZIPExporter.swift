@@ -2,10 +2,11 @@ import Foundation
 
 struct ZIPExporter {
 
-    /// Creates a ZIP file containing the CSV, video, chart image, and a summary text file.
+    /// Creates a ZIP file containing the CSV, videos, chart image, and a summary text file.
     static func export(
         csvURL: URL?,
         videoURL: URL?,
+        skeletonVideoURL: URL?,
         chartImageData: Data?,
         samples: [JointDepthSample],
         duration: TimeInterval
@@ -24,10 +25,16 @@ struct ZIPExporter {
             try FileManager.default.copyItem(at: csvURL, to: dest)
         }
 
-        // Copy video
+        // Copy clean video
         if let videoURL, FileManager.default.fileExists(atPath: videoURL.path) {
             let dest = baseDir.appendingPathComponent("recording.mp4")
             try FileManager.default.copyItem(at: videoURL, to: dest)
+        }
+
+        // Copy skeleton overlay video
+        if let skeletonVideoURL, FileManager.default.fileExists(atPath: skeletonVideoURL.path) {
+            let dest = baseDir.appendingPathComponent("recording_skeleton.mp4")
+            try FileManager.default.copyItem(at: skeletonVideoURL, to: dest)
         }
 
         // Save chart image
@@ -97,6 +104,12 @@ struct ZIPExporter {
             lines.append(String(format: "  Avg: %.4f m", avg))
             lines.append(String(format: "  Range: %.4f m", maxVal - minVal))
             lines.append("")
+        }
+
+        // Joint count info
+        if let first = samples.first {
+            lines.append("Total joints tracked per frame: \(first.allJointPositions.count)")
+            lines.append("Joint names: \(first.allJointPositions.keys.sorted().joined(separator: ", "))")
         }
 
         return lines.joined(separator: "\n")

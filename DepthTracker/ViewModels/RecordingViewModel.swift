@@ -28,6 +28,7 @@ class RecordingViewModel {
 
     // Video
     var videoURL: URL?
+    var skeletonVideoURL: URL?
 
     // ZIP export
     var zipURL: URL?
@@ -59,6 +60,7 @@ class RecordingViewModel {
         elapsedTime = 0
         csvURL = nil
         videoURL = nil
+        skeletonVideoURL = nil
         zipURL = nil
         exportError = nil
         countdownRemaining = timerDuration
@@ -89,6 +91,7 @@ class RecordingViewModel {
     func stopRecording() {
         bodyTrackingManager.stopRecording { [weak self] in
             guard let self else { return }
+            self.skeletonVideoURL = self.bodyTrackingManager.skeletonVideoURL
             self.state = .completed
             self.generateExports()
         }
@@ -107,6 +110,7 @@ class RecordingViewModel {
         elapsedTime = 0
         csvURL = nil
         videoURL = nil
+        skeletonVideoURL = nil
         zipURL = nil
         exportError = nil
         state = .idle
@@ -129,6 +133,7 @@ class RecordingViewModel {
             zipURL = try ZIPExporter.export(
                 csvURL: csvURL,
                 videoURL: videoURL,
+                skeletonVideoURL: skeletonVideoURL,
                 chartImageData: chartImageData,
                 samples: samples,
                 duration: elapsedTime

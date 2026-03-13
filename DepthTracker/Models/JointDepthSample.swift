@@ -1,4 +1,5 @@
 import Foundation
+import simd
 
 struct JointDepthSample: Identifiable {
     let id = UUID()
@@ -12,6 +13,10 @@ struct JointDepthSample: Identifiable {
     let headDelta: Float
     let leftFootDelta: Float
     let rightFootDelta: Float
+
+    /// World-space (x, y, z) positions for ALL skeleton joints.
+    /// Keys are ARKit joint names (e.g. "hips_joint", "left_hand_joint", etc.)
+    let allJointPositions: [String: SIMD3<Float>]
 }
 
 struct ChartDataPoint: Identifiable {
