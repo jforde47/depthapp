@@ -23,6 +23,8 @@ targets:
         SWIFT_VERSION: "5.9"
         INFOPLIST_FILE: DepthTracker/Info.plist
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        CURRENT_PROJECT_VERSION: 1
+        MARKETING_VERSION: "1.0"
     info:
       path: DepthTracker/Info.plist
       properties:
@@ -33,3 +35,5 @@ targets:
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
         CFBundleIconName: AppIcon
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
