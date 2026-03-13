@@ -60,6 +60,15 @@ workflows:
         script: |
           brew install xcodegen
           xcodegen generate
+      - name: Increment build number
+        script: |
+          LATEST=$(app-store-connect get-latest-testflight-build-number 6760527756 \
+            --key-id "$APP_STORE_CONNECT_KEY_IDENTIFIER" \
+            --issuer-id "$APP_STORE_CONNECT_ISSUER_ID" \
+            --private-key "@file:$HOME/.appstoreconnect/private_keys/AuthKey_$APP_STORE_CONNECT_KEY_IDENTIFIER.p8")
+          NEW_BUILD=$((LATEST + 1))
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $NEW_BUILD" DepthTracker/Info.plist
+          echo "Build number set to: $NEW_BUILD"
       - name: Set up code signing
         script: xcode-project use-profiles
       - name: Build IPA
