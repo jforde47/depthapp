@@ -7,7 +7,7 @@ workflows:
       ios_signing:
         distribution_type: development
         bundle_identifier: com.jforde.DepthTracker
-      xcode: 15.4
+      xcode: 16.2
       vars:
         XCODE_PROJECT: "DepthTracker.xcodeproj"
         XCODE_SCHEME: "DepthTracker"
@@ -30,7 +30,7 @@ workflows:
     publishing:
       email:
         recipients:
-          - your@email.com
+          - jforde2015@gmail.com
         notify:
           success: true
           failure: true
