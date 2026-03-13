@@ -1,6 +1,6 @@
 name: DepthTracker
 options:
-  bundleIdPrefix: com.yourname
+  bundleIdPrefix: com.jforde
   deploymentTarget:
     iOS: "17.0"
   xcodeVersion: "15.4"
@@ -13,7 +13,7 @@ targets:
       - DepthTracker
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.yourname.DepthTracker
+        PRODUCT_BUNDLE_IDENTIFIER: com.jforde.DepthTracker
         TARGETED_DEVICE_FAMILY: "1"
         SWIFT_VERSION: "5.9"
         INFOPLIST_FILE: DepthTracker/Info.plist
