@@ -18,6 +18,47 @@ workflows:
         script: |
           brew install xcodegen
           xcodegen generate
+      - name: Generate app icon
+        script: |
+          ICON_DIR="DepthTracker/Assets.xcassets/AppIcon.appiconset"
+          mkdir -p "$ICON_DIR"
+          python3 -c "
+          import struct, zlib
+          def make_png(w, h, r, g, b):
+              def chunk(name, data):
+                  c = zlib.crc32(name + data) & 0xffffffff
+                  return struct.pack('>I', len(data)) + name + data + struct.pack('>I', c)
+              ihdr = struct.pack('>IIBBBBB', w, h, 8, 2, 0, 0, 0)
+              raw = b''.join(b'\x00' + bytes([r,g,b] * w) for _ in range(h))
+              idat = zlib.compress(raw)
+              return b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', ihdr) + chunk(b'IDAT', idat) + chunk(b'IEND', b'')
+          with open('DepthTracker/Assets.xcassets/AppIcon.appiconset/icon_1024.png', 'wb') as f:
+              f.write(make_png(1024, 1024, 0, 120, 200))
+          "
+          cat > "$ICON_DIR/Contents.json" << 'EOF'
+          {
+            "images": [
+              {
+                "idiom": "universal",
+                "platform": "ios",
+                "size": "1024x1024",
+                "filename": "icon_1024.png"
+              }
+            ],
+            "info": {
+              "author": "xcode",
+              "version": 1
+            }
+          }
+          EOF
+          cat > "DepthTracker/Assets.xcassets/Contents.json" << 'EOF'
+          {
+            "info": {
+              "author": "xcode",
+              "version": 1
+            }
+          }
+          EOF
       - name: Set up code signing
         script: xcode-project use-profiles
       - name: Build IPA
