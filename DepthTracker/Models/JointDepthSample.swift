@@ -1,9 +1,12 @@
 import Foundation
+import simd
 
 struct JointDepthSample: Identifiable {
     let id = UUID()
     let frameNumber: Int
     let timestamp: TimeInterval  // seconds since recording start
+
+    // Skeleton-derived depth (from ARKit body tracking camera-space Z)
     let pelvisDepth: Float       // meters from camera
     let headDepth: Float
     let leftFootDepth: Float
@@ -12,6 +15,17 @@ struct JointDepthSample: Identifiable {
     let headDelta: Float
     let leftFootDelta: Float
     let rightFootDelta: Float
+
+    // LiDAR-measured depth (sampled from sceneDepth map at joint's projected position)
+    // NaN when LiDAR is unavailable or joint could not be projected
+    let lidarPelvisDepth: Float
+    let lidarHeadDepth: Float
+    let lidarLeftFootDepth: Float
+    let lidarRightFootDepth: Float
+
+    /// World-space (x, y, z) positions for ALL skeleton joints.
+    /// Keys are ARKit joint names (e.g. "hips_joint", "left_hand_joint", etc.)
+    let allJointPositions: [String: SIMD3<Float>]
 }
 
 struct ChartDataPoint: Identifiable {
