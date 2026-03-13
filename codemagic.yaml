@@ -30,6 +30,8 @@ workflows:
     publishing:
       app_store_connect:
         api_key: DepthApp
+        key_id: Y6YR6N9GV6
+        issuer_id: 9b206a17-174f-4125-9733-042754d65886
         submit_to_testflight: true
       email:
         recipients:
