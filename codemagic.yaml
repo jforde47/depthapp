@@ -27,13 +27,12 @@ workflows:
             --scheme "$XCODE_SCHEME"
       - name: Publish to TestFlight
         script: |
-          echo "$APP_STORE_CONNECT_PRIVATE_KEY" | base64 --decode > /tmp/api_key.p8
-          app-store-connect publish \
-            --path $(find build/ios/ipa -name "*.ipa") \
-            --key-id "$APP_STORE_CONNECT_KEY_IDENTIFIER" \
-            --issuer-id "$APP_STORE_CONNECT_ISSUER_ID" \
-            --private-key @file:/tmp/api_key.p8 \
-            --testflight
+          echo "APP_STORE_CONNECT_PRIVATE_KEY length: ${#APP_STORE_CONNECT_PRIVATE_KEY}"
+          echo "APP_STORE_CONNECT_KEY_IDENTIFIER: $APP_STORE_CONNECT_KEY_IDENTIFIER"
+          echo "APP_STORE_CONNECT_ISSUER_ID: $APP_STORE_CONNECT_ISSUER_ID"
+          echo "$APP_STORE_CONNECT_PRIVATE_KEY" | base64 -d -i > /tmp/api_key.p8 2>/dev/null || echo "$APP_STORE_CONNECT_PRIVATE_KEY" > /tmp/api_key.p8
+          echo "Key file size: $(wc -c < /tmp/api_key.p8)"
+          head -1 /tmp/api_key.p8
     artifacts:
       - build/ios/ipa/*.ipa
     publishing:
