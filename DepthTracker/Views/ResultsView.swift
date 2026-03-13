@@ -1,8 +1,10 @@
 import SwiftUI
+import AVKit
 
 struct ResultsView: View {
     @Bindable var viewModel: RecordingViewModel
     @State private var isPreparingZIP = false
+    @State private var showCSVPreview = false
 
     private var hasLidarData: Bool {
         viewModel.samples.contains { !$0.lidarPelvisDepth.isNaN }
@@ -18,9 +20,24 @@ struct ResultsView: View {
                 DepthChartView(samples: viewModel.samples)
                     .padding(.horizontal)
 
+                // Videos
+                videoSection
+
                 // Stats
                 if !viewModel.samples.isEmpty {
                     statsSection
+                }
+
+                // CSV Preview
+                if viewModel.csvURL != nil {
+                    Button {
+                        showCSVPreview = true
+                    } label: {
+                        Label("Preview CSV Data", systemImage: "tablecells")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    .padding(.horizontal)
                 }
 
                 // Export ZIP
@@ -75,7 +92,43 @@ struct ResultsView: View {
         }
         .navigationTitle("Results")
         .navigationBarTitleDisplayMode(.inline)
+        .sheet(isPresented: $showCSVPreview) {
+            CSVPreviewSheet(csvURL: viewModel.csvURL)
+        }
     }
+
+    // MARK: - Video Section
+
+    @ViewBuilder
+    private var videoSection: some View {
+        VStack(spacing: 12) {
+            if let skeletonURL = viewModel.skeletonVideoURL,
+               FileManager.default.fileExists(atPath: skeletonURL.path) {
+                Text("Skeleton Overlay")
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.secondary)
+                VideoPlayer(player: AVPlayer(url: skeletonURL))
+                    .frame(height: 480)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .padding(.horizontal)
+            }
+
+            if let videoURL = viewModel.videoURL,
+               FileManager.default.fileExists(atPath: videoURL.path) {
+                Text("Clean Video")
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.secondary)
+                VideoPlayer(player: AVPlayer(url: videoURL))
+                    .frame(height: 480)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .padding(.horizontal)
+            }
+        }
+    }
+
+    // MARK: - Stats Section
 
     @ViewBuilder
     private var statsSection: some View {
@@ -173,5 +226,79 @@ struct ResultsView: View {
 
         viewModel.generateZIP(chartImageData: chartImageData)
         isPreparingZIP = false
+    }
+}
+
+// MARK: - CSV Preview Sheet
+
+struct CSVPreviewSheet: View {
+    let csvURL: URL?
+    @Environment(\.dismiss) private var dismiss
+    @State private var csvContent: String = ""
+    @State private var headers: [String] = []
+    @State private var rows: [[String]] = []
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if headers.isEmpty {
+                    ContentUnavailableView("No CSV Data", systemImage: "tablecells")
+                } else {
+                    ScrollView([.horizontal, .vertical]) {
+                        LazyVStack(alignment: .leading, spacing: 0) {
+                            // Header row
+                            HStack(spacing: 0) {
+                                ForEach(headers.indices, id: \.self) { i in
+                                    Text(headers[i])
+                                        .font(.system(size: 11, weight: .bold, design: .monospaced))
+                                        .foregroundStyle(.white)
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 4)
+                                        .frame(minWidth: 90, alignment: .leading)
+                                        .background(Color.accentColor.opacity(0.8))
+                                }
+                            }
+
+                            // Data rows
+                            ForEach(rows.indices, id: \.self) { rowIdx in
+                                HStack(spacing: 0) {
+                                    ForEach(rows[rowIdx].indices, id: \.self) { colIdx in
+                                        Text(rows[rowIdx][colIdx])
+                                            .font(.system(size: 11, design: .monospaced))
+                                            .padding(.horizontal, 6)
+                                            .padding(.vertical, 3)
+                                            .frame(minWidth: 90, alignment: .leading)
+                                    }
+                                }
+                                .background(rowIdx % 2 == 0 ? Color.clear : Color.gray.opacity(0.1))
+                            }
+                        }
+                        .padding(8)
+                    }
+                }
+            }
+            .navigationTitle("CSV Preview")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+        .onAppear { loadCSV() }
+    }
+
+    private func loadCSV() {
+        guard let url = csvURL,
+              let content = try? String(contentsOf: url, encoding: .utf8) else { return }
+
+        let lines = content.components(separatedBy: "\n").filter { !$0.isEmpty }
+        guard let headerLine = lines.first else { return }
+
+        headers = headerLine.components(separatedBy: ",")
+
+        // Limit preview to first 200 rows for performance
+        let dataLines = Array(lines.dropFirst().prefix(200))
+        rows = dataLines.map { $0.components(separatedBy: ",") }
     }
 }

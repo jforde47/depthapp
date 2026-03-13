@@ -25,7 +25,7 @@ class RecordingViewModel {
 
     // Camera
     var useFrontCamera: Bool = false
-    var lidarAvailable: Bool { bodyTrackingManager.isLidarAvailable }
+    var lidarAvailable: Bool = false
 
     // Video
     var videoURL: URL?
@@ -58,11 +58,13 @@ class RecordingViewModel {
 
     func startSession() {
         bodyTrackingManager.startSession(useFrontCamera: useFrontCamera)
+        lidarAvailable = bodyTrackingManager.isLidarAvailable
     }
 
     func toggleCamera() {
         useFrontCamera.toggle()
         bodyTrackingManager.startSession(useFrontCamera: useFrontCamera)
+        lidarAvailable = bodyTrackingManager.isLidarAvailable
     }
 
     func beginCountdown() {
