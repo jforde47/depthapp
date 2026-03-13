@@ -12,7 +12,7 @@ workflows:
         XCODE_PROJECT: "DepthTracker.xcodeproj"
         XCODE_SCHEME: "DepthTracker"
     integrations:
-      app_store_connect: jforde
+      app_store_connect: DepthApp
     scripts:
       - name: Install XcodeGen and generate project
         script: |
