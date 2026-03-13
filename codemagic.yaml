@@ -14,11 +14,7 @@ workflows:
     integrations:
       app_store_connect: DepthApp
     scripts:
-      - name: Install XcodeGen and generate project
-        script: |
-          brew install xcodegen
-          xcodegen generate
-      - name: Generate app icon
+      - name: Generate app icon and assets
         script: |
           ICON_DIR="DepthTracker/Assets.xcassets/AppIcon.appiconset"
           mkdir -p "$ICON_DIR"
@@ -35,7 +31,7 @@ workflows:
           with open('DepthTracker/Assets.xcassets/AppIcon.appiconset/icon_1024.png', 'wb') as f:
               f.write(make_png(1024, 1024, 0, 120, 200))
           "
-          cat > "$ICON_DIR/Contents.json" << 'EOF'
+          cat > "$ICON_DIR/Contents.json" << 'JSONEOF'
           {
             "images": [
               {
@@ -50,15 +46,20 @@ workflows:
               "version": 1
             }
           }
-          EOF
-          cat > "DepthTracker/Assets.xcassets/Contents.json" << 'EOF'
+          JSONEOF
+          mkdir -p "DepthTracker/Assets.xcassets"
+          cat > "DepthTracker/Assets.xcassets/Contents.json" << 'JSONEOF'
           {
             "info": {
               "author": "xcode",
               "version": 1
             }
           }
-          EOF
+          JSONEOF
+      - name: Install XcodeGen and generate project
+        script: |
+          brew install xcodegen
+          xcodegen generate
       - name: Set up code signing
         script: xcode-project use-profiles
       - name: Build IPA
