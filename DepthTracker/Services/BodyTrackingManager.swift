@@ -10,7 +10,9 @@ class BodyTrackingManager: NSObject, ARSessionDelegate {
     /// Called on each frame when recording is active
     var onSample: ((JointDepthSample) -> Void)?
 
-    /// Whether LiDAR scene depth is available and enabled
+    /// Whether device has LiDAR hardware
+    private(set) var hasLidarHardware = false
+    /// Whether scene depth is actively being delivered in frames
     private(set) var isLidarAvailable = false
 
     private var isRecording = false
@@ -36,8 +38,12 @@ class BodyTrackingManager: NSObject, ARSessionDelegate {
     // Reusable CIContext for pixel buffer conversion
     private let ciContext = CIContext()
 
-    // Last known body data for skeleton rendering (used when didUpdate frame fires)
+    // Last known body data for skeleton rendering
     private var lastBodyAnchor: ARBodyAnchor?
+
+    // Portrait video dimensions
+    private static let videoWidth = 1080
+    private static let videoHeight = 1920
 
     private static let trackedJoints: [(name: String, label: String)] = [
         ("hips_joint",       "pelvis"),
@@ -49,6 +55,9 @@ class BodyTrackingManager: NSObject, ARSessionDelegate {
     override init() {
         super.init()
         session.delegate = self
+
+        // Detect LiDAR hardware by checking if ANY config supports sceneDepth
+        hasLidarHardware = ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth)
     }
 
     func startSession(useFrontCamera: Bool = false) {
@@ -68,9 +77,15 @@ class BodyTrackingManager: NSObject, ARSessionDelegate {
             let config = ARBodyTrackingConfiguration()
             config.automaticSkeletonScaleEstimationEnabled = true
 
-            // Enable LiDAR scene depth if device supports it
+            // Try to enable LiDAR scene depth on body tracking config
+            // This works on iOS 16+ with LiDAR devices
             if ARBodyTrackingConfiguration.supportsFrameSemantics(.sceneDepth) {
                 config.frameSemantics.insert(.sceneDepth)
+                isLidarAvailable = true
+            } else if hasLidarHardware {
+                // Device has LiDAR but ARBodyTrackingConfiguration doesn't support
+                // .sceneDepth on this iOS version. We'll still try to read
+                // frame.sceneDepth at runtime — some OS versions populate it anyway.
                 isLidarAvailable = true
             } else {
                 isLidarAvailable = false
@@ -90,7 +105,6 @@ class BodyTrackingManager: NSObject, ARSessionDelegate {
         previousDepths = [:]
         lastBodyAnchor = nil
 
-        // Skeleton overlay video URL
         let skeletonFilename = videoOutputURL.deletingPathExtension().lastPathComponent + "_skeleton.mp4"
         skeletonVideoURL = FileManager.default.temporaryDirectory.appendingPathComponent(skeletonFilename)
 
@@ -123,7 +137,7 @@ class BodyTrackingManager: NSObject, ARSessionDelegate {
         let depthHeight = CVPixelBufferGetHeight(depthMap)
 
         // Project world point to depth map coordinates.
-        // The depth map is aligned with the camera image in its native orientation (landscape right).
+        // The depth map aligns with the camera's native orientation (landscape right).
         let depthMapSize = CGSize(width: depthWidth, height: depthHeight)
         let projected = frame.camera.projectPoint(
             worldPosition,
@@ -134,12 +148,10 @@ class BodyTrackingManager: NSObject, ARSessionDelegate {
         let px = Int(projected.x)
         let py = Int(projected.y)
 
-        // Bounds check
         guard px >= 0, px < depthWidth, py >= 0, py < depthHeight else {
             return .nan
         }
 
-        // Sample the Float32 depth map
         CVPixelBufferLockBaseAddress(depthMap, .readOnly)
         defer { CVPixelBufferUnlockBaseAddress(depthMap, .readOnly) }
 
@@ -150,16 +162,11 @@ class BodyTrackingManager: NSObject, ARSessionDelegate {
         let pixelPtr = rowPtr.advanced(by: px * MemoryLayout<Float32>.size)
         let depth = pixelPtr.assumingMemoryBound(to: Float32.self).pointee
 
-        // Filter out invalid readings (zero or negative)
         guard depth > 0, !depth.isNaN, !depth.isInfinite else { return .nan }
-
         return depth
     }
 
-    // MARK: - Video Writer Setup
-
-    private static let videoWidth = 1920
-    private static let videoHeight = 1080
+    // MARK: - Video Writer Setup (Portrait: 1080x1920)
 
     private func makeWriterAndInput(outputURL: URL) -> (AVAssetWriter, AVAssetWriterInput, AVAssetWriterInputPixelBufferAdaptor)? {
         try? FileManager.default.removeItem(at: outputURL)
@@ -211,7 +218,34 @@ class BodyTrackingManager: NSObject, ARSessionDelegate {
         skeletonVideoStartTime = nil
     }
 
-    private func appendFrame(
+    /// Rotate the landscape camera buffer 90° clockwise to portrait, then scale to output size.
+    private func rotateAndScaleToPortrait(_ source: CVPixelBuffer) -> CVPixelBuffer? {
+        let ciImage = CIImage(cvPixelBuffer: source)
+
+        // Rotate 90° clockwise: .right gives landscape → portrait
+        let rotated = ciImage.oriented(.right)
+
+        // Scale to exact output dimensions
+        let scaleX = CGFloat(Self.videoWidth) / rotated.extent.width
+        let scaleY = CGFloat(Self.videoHeight) / rotated.extent.height
+        let scaled = rotated.transformed(by: CGAffineTransform(scaleX: scaleX, y: scaleY))
+
+        var outputBuffer: CVPixelBuffer?
+        let attrs: [String: Any] = [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+            kCVPixelBufferWidthKey as String: Self.videoWidth,
+            kCVPixelBufferHeightKey as String: Self.videoHeight
+        ]
+        CVPixelBufferCreate(kCFAllocatorDefault, Self.videoWidth, Self.videoHeight,
+                           kCVPixelFormatType_32BGRA, attrs as CFDictionary, &outputBuffer)
+
+        if let outputBuffer {
+            ciContext.render(scaled, to: outputBuffer)
+        }
+        return outputBuffer
+    }
+
+    private func appendPortraitFrame(
         pixelBuffer: CVPixelBuffer,
         timestamp: TimeInterval,
         writer: AVAssetWriter,
@@ -230,30 +264,9 @@ class BodyTrackingManager: NSObject, ARSessionDelegate {
 
         guard input.isReadyForMoreMediaData else { return }
 
-        if let scaled = scalePixelBuffer(pixelBuffer, to: CGSize(width: Self.videoWidth, height: Self.videoHeight)) {
-            adaptor.append(scaled, withPresentationTime: time)
+        if let portraitBuffer = rotateAndScaleToPortrait(pixelBuffer) {
+            adaptor.append(portraitBuffer, withPresentationTime: time)
         }
-    }
-
-    private func scalePixelBuffer(_ source: CVPixelBuffer, to size: CGSize) -> CVPixelBuffer? {
-        let ciImage = CIImage(cvPixelBuffer: source)
-        let scaleX = size.width / CGFloat(CVPixelBufferGetWidth(source))
-        let scaleY = size.height / CGFloat(CVPixelBufferGetHeight(source))
-        let scaled = ciImage.transformed(by: CGAffineTransform(scaleX: scaleX, y: scaleY))
-
-        var outputBuffer: CVPixelBuffer?
-        let attrs: [String: Any] = [
-            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
-            kCVPixelBufferWidthKey as String: Int(size.width),
-            kCVPixelBufferHeightKey as String: Int(size.height)
-        ]
-        CVPixelBufferCreate(kCFAllocatorDefault, Int(size.width), Int(size.height),
-                           kCVPixelFormatType_32BGRA, attrs as CFDictionary, &outputBuffer)
-
-        if let outputBuffer {
-            ciContext.render(scaled, to: outputBuffer)
-        }
-        return outputBuffer
     }
 
     private func finishAllVideoWriting() {
@@ -285,9 +298,9 @@ class BodyTrackingManager: NSObject, ARSessionDelegate {
         }
     }
 
-    // MARK: - Skeleton Overlay Rendering
+    // MARK: - Skeleton Overlay Rendering (Portrait)
 
-    /// Project all joints to 2D, draw skeleton + depth text on top of camera frame.
+    /// Rotate camera image to portrait, project joints to portrait viewport, draw skeleton + text.
     private func renderSkeletonOverlay(
         onto pixelBuffer: CVPixelBuffer,
         bodyAnchor: ARBodyAnchor,
@@ -295,18 +308,19 @@ class BodyTrackingManager: NSObject, ARSessionDelegate {
         depths: [String: Float],
         lidarDepths: [String: Float]
     ) -> CVPixelBuffer? {
-        let width = Self.videoWidth
-        let height = Self.videoHeight
+        let width = Self.videoWidth   // 1080
+        let height = Self.videoHeight // 1920
 
-        guard let scaledBuffer = scalePixelBuffer(pixelBuffer, to: CGSize(width: width, height: height)) else {
+        // Rotate landscape camera image to portrait
+        guard let portraitBuffer = rotateAndScaleToPortrait(pixelBuffer) else {
             return nil
         }
 
-        CVPixelBufferLockBaseAddress(scaledBuffer, [])
-        defer { CVPixelBufferUnlockBaseAddress(scaledBuffer, []) }
+        CVPixelBufferLockBaseAddress(portraitBuffer, [])
+        defer { CVPixelBufferUnlockBaseAddress(portraitBuffer, []) }
 
-        guard let baseAddress = CVPixelBufferGetBaseAddress(scaledBuffer) else { return nil }
-        let bytesPerRow = CVPixelBufferGetBytesPerRow(scaledBuffer)
+        guard let baseAddress = CVPixelBufferGetBaseAddress(portraitBuffer) else { return nil }
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(portraitBuffer)
 
         let colorSpace = CGColorSpaceCreateDeviceRGB()
         guard let ctx = CGContext(
@@ -319,15 +333,16 @@ class BodyTrackingManager: NSObject, ARSessionDelegate {
             bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
         ) else { return nil }
 
-        // Flip vertically so drawing matches image (CGContext origin is bottom-left)
+        // CGContext origin is bottom-left; flip to top-left for drawing
         ctx.translateBy(x: 0, y: CGFloat(height))
         ctx.scaleBy(x: 1, y: -1)
 
+        // Portrait viewport matching our video output size
         let viewportSize = CGSize(width: width, height: height)
         let skeleton = bodyAnchor.skeleton
         let definition = skeleton.definition
 
-        // Collect 2D projected positions for all joints
+        // Project all joints to 2D portrait coordinates
         var jointScreenPositions: [Int: CGPoint] = [:]
         let jointNames = definition.jointNames
 
@@ -338,13 +353,14 @@ class BodyTrackingManager: NSObject, ARSessionDelegate {
             let worldPos = SIMD3<Float>(worldTransform.columns.3.x,
                                          worldTransform.columns.3.y,
                                          worldTransform.columns.3.z)
+            // Project using .portrait orientation so coordinates match our rotated image
             let screenPoint = frame.camera.projectPoint(worldPos,
                                                          orientation: .portrait,
                                                          viewportSize: viewportSize)
             jointScreenPositions[index] = screenPoint
         }
 
-        // Draw bones
+        // Draw bones (green lines)
         let parentIndices = definition.parentIndices
         ctx.setStrokeColor(CGColor(red: 0, green: 1, blue: 0.4, alpha: 0.9))
         ctx.setLineWidth(3.0)
@@ -358,16 +374,16 @@ class BodyTrackingManager: NSObject, ARSessionDelegate {
         }
         ctx.strokePath()
 
-        // Draw joint dots
+        // Draw joint dots (red)
         ctx.setFillColor(CGColor(red: 1, green: 0.2, blue: 0.2, alpha: 1.0))
         for (_, pt) in jointScreenPositions {
-            ctx.fillEllipse(in: CGRect(x: pt.x - 4, y: pt.y - 4, width: 8, height: 8))
+            ctx.fillEllipse(in: CGRect(x: pt.x - 5, y: pt.y - 5, width: 10, height: 10))
         }
 
-        // Draw depth text box
+        // Draw depth text box (top-right corner)
         drawDepthTextBox(ctx: ctx, depths: depths, lidarDepths: lidarDepths, width: width)
 
-        return scaledBuffer
+        return portraitBuffer
     }
 
     private func drawDepthTextBox(
@@ -390,39 +406,43 @@ class BodyTrackingManager: NSObject, ARSessionDelegate {
             DepthLine(label: "R Foot", skeletonDepth: depths["rightFoot"], lidarDepth: lidarDepths["rightFoot"])
         ]
 
-        let boxWidth: CGFloat = hasLidar ? 340 : 220
-        let lineHeight: CGFloat = 22
-        let padding: CGFloat = 10
+        let fontSize: CGFloat = 18
+        let boxWidth: CGFloat = hasLidar ? 380 : 260
+        let lineHeight: CGFloat = 28
+        let padding: CGFloat = 12
         let headerHeight: CGFloat = hasLidar ? lineHeight + 4 : 0
         let boxHeight = padding * 2 + headerHeight + lineHeight * CGFloat(lines.count)
-        let boxX = CGFloat(width) - boxWidth - 16
-        let boxY: CGFloat = 16
+        let boxX = CGFloat(width) - boxWidth - 20
+        let boxY: CGFloat = 20
 
         // Background
         ctx.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 0.7))
         let boxRect = CGRect(x: boxX, y: boxY, width: boxWidth, height: boxHeight)
-        ctx.fill(boxRect)
+        let cornerRadius: CGFloat = 10
+        let roundedPath = CGPath(roundedRect: boxRect, cornerWidth: cornerRadius, cornerHeight: cornerRadius, transform: nil)
+        ctx.addPath(roundedPath)
+        ctx.fillPath()
 
         // Border
-        ctx.setStrokeColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.5))
+        ctx.setStrokeColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.4))
         ctx.setLineWidth(1)
-        ctx.stroke(boxRect)
+        ctx.addPath(roundedPath)
+        ctx.strokePath()
 
-        let font = CTFontCreateWithName("Menlo-Bold" as CFString, 13, nil)
-        let smallFont = CTFontCreateWithName("Menlo" as CFString, 11, nil)
+        let font = CTFontCreateWithName("Menlo-Bold" as CFString, fontSize, nil)
+        let smallFont = CTFontCreateWithName("Menlo" as CFString, fontSize - 3, nil)
         let whiteColor = CGColor(red: 1, green: 1, blue: 1, alpha: 1)
         let cyanColor = CGColor(red: 0.3, green: 0.9, blue: 1, alpha: 1)
         let dimColor = CGColor(red: 1, green: 1, blue: 1, alpha: 0.5)
         var yOffset = boxY + padding
 
-        // Header row if LiDAR is active
         if hasLidar {
-            let header = NSAttributedString(string: "         Skeleton   LiDAR", attributes: [
+            let header = NSAttributedString(string: "           Skel    LiDAR", attributes: [
                 .font: smallFont,
                 .foregroundColor: dimColor
             ])
             let headerLine = CTLineCreateWithAttributedString(header)
-            ctx.textPosition = CGPoint(x: boxX + padding, y: yOffset + lineHeight - 4)
+            ctx.textPosition = CGPoint(x: boxX + padding, y: yOffset + lineHeight - 5)
             CTLineDraw(headerLine, ctx)
             yOffset += lineHeight + 4
         }
@@ -434,12 +454,11 @@ class BodyTrackingManager: NSObject, ARSessionDelegate {
             if hasLidar {
                 let lidarStr = formatDepth(item.lidarDepth)
                 text = NSMutableAttributedString(
-                    string: "\(item.label): \(skelStr)  \(lidarStr)",
+                    string: "\(item.label): \(skelStr) \(lidarStr)",
                     attributes: [.font: font, .foregroundColor: whiteColor]
                 )
-                // Color the LiDAR portion cyan
                 let lidarRange = NSRange(
-                    location: "\(item.label): \(skelStr)  ".count,
+                    location: "\(item.label): \(skelStr) ".count,
                     length: lidarStr.count
                 )
                 text.addAttribute(.foregroundColor, value: cyanColor, range: lidarRange)
@@ -451,7 +470,7 @@ class BodyTrackingManager: NSObject, ARSessionDelegate {
             }
 
             let line = CTLineCreateWithAttributedString(text)
-            ctx.textPosition = CGPoint(x: boxX + padding, y: yOffset + lineHeight - 4)
+            ctx.textPosition = CGPoint(x: boxX + padding, y: yOffset + lineHeight - 5)
             CTLineDraw(line, ctx)
             yOffset += lineHeight
         }
@@ -469,10 +488,10 @@ class BodyTrackingManager: NSObject, ARSessionDelegate {
 
         let timestamp = frame.timestamp
 
-        // Write clean video frame
+        // Write clean video frame (portrait)
         if let writer = assetWriter, let input = assetWriterInput, let adaptor = pixelBufferAdaptor {
-            appendFrame(pixelBuffer: frame.capturedImage, timestamp: timestamp,
-                       writer: writer, input: input, adaptor: adaptor, startTime: &videoStartTime)
+            appendPortraitFrame(pixelBuffer: frame.capturedImage, timestamp: timestamp,
+                               writer: writer, input: input, adaptor: adaptor, startTime: &videoStartTime)
         }
 
         // Write skeleton overlay frame (if we have body data)
@@ -490,7 +509,6 @@ class BodyTrackingManager: NSObject, ARSessionDelegate {
                     let cs = inverseCam * wt
                     depths[label] = -cs.columns.3.z
 
-                    // Sample LiDAR depth at this joint's position
                     let worldPos = SIMD3<Float>(wt.columns.3.x, wt.columns.3.y, wt.columns.3.z)
                     lidarDepths[label] = sampleLidarDepth(for: worldPos, frame: frame)
                 }
@@ -513,8 +531,9 @@ class BodyTrackingManager: NSObject, ARSessionDelegate {
                 }
             }
         } else if let sWriter = skeletonWriter, let sInput = skeletonWriterInput, let sAdaptor = skeletonPixelBufferAdaptor {
-            appendFrame(pixelBuffer: frame.capturedImage, timestamp: timestamp,
-                       writer: sWriter, input: sInput, adaptor: sAdaptor, startTime: &skeletonVideoStartTime)
+            // No body yet — write plain portrait frame
+            appendPortraitFrame(pixelBuffer: frame.capturedImage, timestamp: timestamp,
+                               writer: sWriter, input: sInput, adaptor: sAdaptor, startTime: &skeletonVideoStartTime)
         }
     }
 
@@ -551,7 +570,6 @@ class BodyTrackingManager: NSObject, ARSessionDelegate {
             let depth = -jointCameraSpace.columns.3.z
             depths[label] = depth
 
-            // Sample LiDAR depth map at this joint's projected position
             let worldPos = SIMD3<Float>(
                 jointWorldTransform.columns.3.x,
                 jointWorldTransform.columns.3.y,
@@ -560,7 +578,6 @@ class BodyTrackingManager: NSObject, ARSessionDelegate {
             lidarDepths[label] = sampleLidarDepth(for: worldPos, frame: frame)
         }
 
-        // Compute deltas (from skeleton depth)
         let pelvisDelta = (previousDepths["pelvis"] != nil)
             ? (depths["pelvis"] ?? 0) - (previousDepths["pelvis"] ?? 0)
             : 0
@@ -574,7 +591,6 @@ class BodyTrackingManager: NSObject, ARSessionDelegate {
             ? (depths["rightFoot"] ?? 0) - (previousDepths["rightFoot"] ?? 0)
             : 0
 
-        // Extract ALL joint world-space positions
         var allJointPositions: [String: SIMD3<Float>] = [:]
         let skeleton = bodyAnchor.skeleton
         let jointNames = skeleton.definition.jointNames
