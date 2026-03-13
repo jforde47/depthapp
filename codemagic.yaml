@@ -28,6 +28,9 @@ workflows:
     artifacts:
       - build/ios/ipa/*.ipa
     publishing:
+      app_store_connect:
+        api_key: DepthApp
+        submit_to_testflight: true
       email:
         recipients:
           - jforde2015@gmail.com
