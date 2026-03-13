@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ResultsView: View {
     @Bindable var viewModel: RecordingViewModel
+    @State private var isPreparingZIP = false
 
     var body: some View {
         ScrollView {
@@ -18,13 +19,39 @@ struct ResultsView: View {
                     statsSection
                 }
 
-                // Export
-                if let url = viewModel.csvURL {
-                    ShareLink(item: url) {
-                        Label("Export CSV", systemImage: "square.and.arrow.up")
+                // Export ZIP
+                if let zipURL = viewModel.zipURL {
+                    ShareLink(item: zipURL) {
+                        Label("Export ZIP (CSV + Video + Chart + Summary)", systemImage: "square.and.arrow.up")
+                            .font(.subheadline)
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
+                    .padding(.horizontal)
+                } else {
+                    Button {
+                        prepareZIPExport()
+                    } label: {
+                        if isPreparingZIP {
+                            ProgressView()
+                                .frame(maxWidth: .infinity)
+                        } else {
+                            Label("Prepare ZIP Export", systemImage: "archivebox")
+                                .frame(maxWidth: .infinity)
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(isPreparingZIP)
+                    .padding(.horizontal)
+                }
+
+                // Individual CSV export
+                if let url = viewModel.csvURL {
+                    ShareLink(item: url) {
+                        Label("Export CSV Only", systemImage: "tablecells")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
                     .padding(.horizontal)
                 }
 
@@ -90,5 +117,22 @@ struct ResultsView: View {
                     .font(.caption)
             }
         }
+    }
+
+    private func prepareZIPExport() {
+        isPreparingZIP = true
+
+        // Render the chart to a PNG image
+        let chartView = DepthChartView(samples: viewModel.samples)
+            .frame(width: 800, height: 400)
+            .padding()
+            .background(.white)
+
+        let renderer = ImageRenderer(content: chartView)
+        renderer.scale = 2.0
+        let chartImageData = renderer.uiImage?.pngData()
+
+        viewModel.generateZIP(chartImageData: chartImageData)
+        isPreparingZIP = false
     }
 }

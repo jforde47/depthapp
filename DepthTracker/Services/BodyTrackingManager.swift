@@ -1,4 +1,5 @@
 import ARKit
+import AVFoundation
 import RealityKit
 
 class BodyTrackingManager: NSObject, ARSessionDelegate {
@@ -13,6 +14,13 @@ class BodyTrackingManager: NSObject, ARSessionDelegate {
     private var recordingStartTime: TimeInterval = 0
     private var previousDepths: [String: Float] = [:]
 
+    // Video recording
+    private var assetWriter: AVAssetWriter?
+    private var assetWriterInput: AVAssetWriterInput?
+    private var pixelBufferAdaptor: AVAssetWriterInputPixelBufferAdaptor?
+    private var videoStartTime: CMTime?
+    private var videoCompletion: (() -> Void)?
+
     private static let trackedJoints: [(name: String, label: String)] = [
         ("hips_joint",       "pelvis"),
         ("head_joint",       "head"),
@@ -25,32 +33,156 @@ class BodyTrackingManager: NSObject, ARSessionDelegate {
         session.delegate = self
     }
 
-    func startSession() {
-        guard ARBodyTrackingConfiguration.isSupported else {
-            print("ARBodyTrackingConfiguration is not supported on this device.")
-            return
+    func startSession(useFrontCamera: Bool = false) {
+        if useFrontCamera {
+            guard ARFaceTrackingConfiguration.isSupported else {
+                print("ARFaceTrackingConfiguration is not supported on this device.")
+                return
+            }
+            let config = ARFaceTrackingConfiguration()
+            session.run(config, options: [.resetTracking, .removeExistingAnchors])
+        } else {
+            guard ARBodyTrackingConfiguration.isSupported else {
+                print("ARBodyTrackingConfiguration is not supported on this device.")
+                return
+            }
+            let config = ARBodyTrackingConfiguration()
+            config.automaticSkeletonScaleEstimationEnabled = true
+            session.run(config, options: [.resetTracking, .removeExistingAnchors])
         }
-        let config = ARBodyTrackingConfiguration()
-        config.automaticSkeletonScaleEstimationEnabled = true
-        session.run(config, options: [.resetTracking, .removeExistingAnchors])
     }
 
     func stopSession() {
         session.pause()
     }
 
-    func startRecording() {
+    func startRecording(videoOutputURL: URL) {
         frameCount = 0
         recordingStartTime = 0
         previousDepths = [:]
+        setupVideoWriter(outputURL: videoOutputURL)
         isRecording = true
     }
 
-    func stopRecording() {
+    func stopRecording(completion: @escaping () -> Void) {
         isRecording = false
+        videoCompletion = completion
+        finishVideoWriting()
+    }
+
+    // MARK: - Video Writer Setup
+
+    private func setupVideoWriter(outputURL: URL) {
+        // Clean up existing file
+        try? FileManager.default.removeItem(at: outputURL)
+
+        do {
+            let writer = try AVAssetWriter(outputURL: outputURL, fileType: .mp4)
+
+            let settings: [String: Any] = [
+                AVVideoCodecKey: AVVideoCodecType.h264,
+                AVVideoWidthKey: 1920,
+                AVVideoHeightKey: 1080,
+                AVVideoCompressionPropertiesKey: [
+                    AVVideoAverageBitRateKey: 6_000_000
+                ]
+            ]
+
+            let input = AVAssetWriterInput(mediaType: .video, outputSettings: settings)
+            input.expectsMediaDataInRealTime = true
+
+            let sourcePixelAttributes: [String: Any] = [
+                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+                kCVPixelBufferWidthKey as String: 1920,
+                kCVPixelBufferHeightKey as String: 1080
+            ]
+
+            let adaptor = AVAssetWriterInputPixelBufferAdaptor(
+                assetWriterInput: input,
+                sourcePixelBufferAttributes: sourcePixelAttributes
+            )
+
+            writer.add(input)
+            writer.startWriting()
+
+            assetWriter = writer
+            assetWriterInput = input
+            pixelBufferAdaptor = adaptor
+            videoStartTime = nil
+        } catch {
+            print("Failed to create AVAssetWriter: \(error)")
+        }
+    }
+
+    private func writeVideoFrame(_ pixelBuffer: CVPixelBuffer, timestamp: TimeInterval) {
+        guard let writer = assetWriter,
+              let input = assetWriterInput,
+              let adaptor = pixelBufferAdaptor,
+              writer.status == .writing else { return }
+
+        let time = CMTime(seconds: timestamp, preferredTimescale: 600)
+
+        if videoStartTime == nil {
+            videoStartTime = time
+            writer.startSession(atSourceTime: time)
+        }
+
+        guard input.isReadyForMoreMediaData else { return }
+
+        // Scale pixel buffer to output size
+        if let scaledBuffer = scalePixelBuffer(pixelBuffer, to: CGSize(width: 1920, height: 1080)) {
+            adaptor.append(scaledBuffer, withPresentationTime: time)
+        }
+    }
+
+    private func scalePixelBuffer(_ source: CVPixelBuffer, to size: CGSize) -> CVPixelBuffer? {
+        let ciImage = CIImage(cvPixelBuffer: source)
+        let scaleX = size.width / CGFloat(CVPixelBufferGetWidth(source))
+        let scaleY = size.height / CGFloat(CVPixelBufferGetHeight(source))
+        let scaled = ciImage.transformed(by: CGAffineTransform(scaleX: scaleX, y: scaleY))
+
+        let context = CIContext()
+        var outputBuffer: CVPixelBuffer?
+        let attrs: [String: Any] = [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+            kCVPixelBufferWidthKey as String: Int(size.width),
+            kCVPixelBufferHeightKey as String: Int(size.height)
+        ]
+        CVPixelBufferCreate(kCFAllocatorDefault, Int(size.width), Int(size.height),
+                           kCVPixelFormatType_32BGRA, attrs as CFDictionary, &outputBuffer)
+
+        if let outputBuffer {
+            context.render(scaled, to: outputBuffer)
+        }
+        return outputBuffer
+    }
+
+    private func finishVideoWriting() {
+        guard let writer = assetWriter else {
+            DispatchQueue.main.async { self.videoCompletion?() }
+            return
+        }
+
+        assetWriterInput?.markAsFinished()
+
+        writer.finishWriting { [weak self] in
+            DispatchQueue.main.async {
+                self?.assetWriter = nil
+                self?.assetWriterInput = nil
+                self?.pixelBufferAdaptor = nil
+                self?.videoStartTime = nil
+                self?.videoCompletion?()
+                self?.videoCompletion = nil
+            }
+        }
     }
 
     // MARK: - ARSessionDelegate
+
+    func session(_ session: ARSession, didUpdate frame: ARFrame) {
+        guard isRecording else { return }
+        writeVideoFrame(frame.capturedImage, timestamp: frame.timestamp)
+    }
 
     func session(_ session: ARSession, didUpdate anchors: [ARAnchor]) {
         guard isRecording,
